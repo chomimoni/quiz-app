@@ -65,13 +65,28 @@ textarea{min-height:76px;resize:vertical}
 <section id="loginView" class="hidden">
   <h1>クイズ暗記</h1>
   <p class="sub">招待された人だけが入れます。</p>
-  <div class="panel">
+  <div class="panel" id="loginPanel">
     <label for="email">メールアドレス</label>
     <input id="email" type="email" autocomplete="email" inputmode="email">
     <label for="pw">パスワード</label>
     <input id="pw" type="password" autocomplete="current-password">
     <button id="loginBtn" class="wide">ログインする</button>
     <p id="loginMsg" class="msg" role="alert"></p>
+    <button id="toSignup" class="small" style="margin-top:8px">はじめての人はこちら</button>
+  </div>
+  <div class="panel hidden" id="signupPanel">
+    <h2>新しく登録する</h2>
+    <label for="suName">ニックネーム</label>
+    <input id="suName" type="text" maxlength="20" autocomplete="nickname">
+    <label for="suEmail">メールアドレス</label>
+    <input id="suEmail" type="email" autocomplete="email" inputmode="email">
+    <label for="suPw">パスワード(8文字以上)</label>
+    <input id="suPw" type="password" autocomplete="new-password">
+    <label for="suCode">招待コード</label>
+    <input id="suCode" type="text" autocomplete="off" autocapitalize="off">
+    <button id="suBtn" class="wide">登録する</button>
+    <p id="suMsg" class="msg" role="alert"></p>
+    <button id="toLogin" class="small" style="margin-top:8px">ログインにもどる</button>
   </div>
 </section>
 
@@ -182,6 +197,25 @@ $("loginBtn").onclick = async () => {
   if (error) { msg.textContent = "ログインできません。メールとパスワードを確認してください。"; return; }
   $("pw").value = "";
   enter(data.user);
+};
+
+function swapAuth(toSignup){
+  $("loginPanel").classList.toggle("hidden", toSignup);
+  $("signupPanel").classList.toggle("hidden", !toSignup);
+}
+$("toSignup").onclick = () => swapAuth(true);
+$("toLogin").onclick = () => swapAuth(false);
+
+$("suBtn").onclick = async () => {
+  const msg = $("suMsg"); msg.className = "msg"; msg.textContent = "";
+  const name = $("suName").value.trim(), email = $("suEmail").value.trim(), pw = $("suPw").value, code = $("suCode").value.trim();
+  if (!name || !email || !code) { msg.textContent = "ニックネーム・メール・招待コードを入力してください。"; return; }
+  if (pw.length < 8) { msg.textContent = "パスワードは8文字以上にしてください。"; return; }
+  const { data, error } = await db.auth.signUp({ email, password: pw, options: { data: { display_name: name, invite_code: code } } });
+  if (error) { msg.textContent = "登録できませんでした。招待コードが違うか、使える回数・期限が切れています。メールアドレスが登録済みの可能性もあります。"; return; }
+  $("suPw").value = ""; $("suCode").value = "";
+  if (data.session) { enter(data.user); }
+  else { msg.className = "msg ok"; msg.textContent = "登録しました。届いたメールの確認をしてからログインしてください。"; }
 };
 
 $("logoutBtn").onclick = async () => { await db.auth.signOut(); me = null; show("login"); };
