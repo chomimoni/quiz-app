@@ -124,11 +124,11 @@ button:disabled{opacity:.55;cursor:default}
   <div id="addPanel" class="panel">
     <h2>問題を追加する</h2>
     <label for="qType">形式</label>
-    <select id="qType"><option value="single">単一選択</option><option value="truefalse">正誤</option><option value="fill">穴埋め</option></select>
+    <select id="qType"><option value="single">単一選択</option><option value="multiple">複数選択</option><option value="truefalse">正誤</option><option value="fill">穴埋め</option><option value="ordering">並べ替え</option><option value="matching">マッチング</option><option value="word">単語</option></select>
     <label for="qBodyIn">問題文</label>
     <textarea id="qBodyIn" maxlength="500"></textarea>
     <div id="fSingle">
-      <label>選択肢(正解にチェック・2つ以上)</label>
+      <label id="optLabel">選択肢(正解にチェック・2つ以上)</label>
       <div class="row"><input type="radio" name="sc" value="0" checked><input type="text" id="o0" placeholder="選択肢1"></div>
       <div class="row"><input type="radio" name="sc" value="1"><input type="text" id="o1" placeholder="選択肢2"></div>
       <div class="row"><input type="radio" name="sc" value="2"><input type="text" id="o2" placeholder="選択肢3"></div>
@@ -142,6 +142,18 @@ button:disabled{opacity:.55;cursor:default}
     <div id="fFill" class="hidden">
       <label for="fillAns">正解(別の書き方も正解にするなら , で区切る)</label>
       <input type="text" id="fillAns">
+    </div>
+    <div id="fOrd" class="hidden">
+      <label for="ordText">正しい順に、1行に1つ(2〜6個)</label>
+      <textarea id="ordText"></textarea>
+    </div>
+    <div id="fMatch" class="hidden">
+      <label for="matchText">1行に1組、「左 = 右」の形(2〜6組)</label>
+      <textarea id="matchText" placeholder="例:心臓 = 血液を送り出す"></textarea>
+    </div>
+    <div id="fWord" class="hidden">
+      <label for="meaningIn">意味(答え)。問題文には単語を入れる</label>
+      <input type="text" id="meaningIn" maxlength="300">
     </div>
     <label for="qExpIn">解説(なくてもOK)</label>
     <input type="text" id="qExpIn" maxlength="300">
@@ -265,7 +277,17 @@ $("createBtn").onclick = async () => {
 };
 
 let curSet = null, curQs = [], qs = [], qi = 0, score = 0, finished = false;
-const TYPE_NAME = { single: "単一選択", truefalse: "正誤", fill: "穴埋め" };
+const TYPE_NAME = { single: "単一選択", multiple: "複数選択", truefalse: "正誤", fill: "穴埋め", ordering: "並べ替え", matching: "マッチング", word: "単語" };
+function correctText(q){
+  const c = q.content;
+  if (q.type === "single") return c.options[c.answer];
+  if (q.type === "truefalse") return c.answer ? "正しい" : "誤り";
+  if (q.type === "fill") return c.answers[0];
+  if (q.type === "multiple") return c.answers.map(i => c.options[i]).join("、");
+  if (q.type === "ordering") return c.items.join(" → ");
+  if (q.type === "matching") return c.pairs.map(p => p[0] + " = " + p[1]).join("、");
+  return c.meaning;
+}
 const norm = s => String(s).trim().normalize("NFKC").toLowerCase();
 
 function openSet(s){
@@ -305,9 +327,15 @@ async function loadQs(){
 
 $("qType").onchange = () => {
   const t = $("qType").value;
-  $("fSingle").classList.toggle("hidden", t !== "single");
+  const multi = t === "multiple";
+  $("fSingle").classList.toggle("hidden", t !== "single" && !multi);
+  document.querySelectorAll('input[name="sc"]').forEach(e => e.type = multi ? "checkbox" : "radio");
+  $("optLabel").textContent = multi ? "選択肢(正解すべてにチェック)" : "選択肢(正解にチェック・2つ以上)";
   $("fTf").classList.toggle("hidden", t !== "truefalse");
   $("fFill").classList.toggle("hidden", t !== "fill");
+  $("fOrd").classList.toggle("hidden", t !== "ordering");
+  $("fMatch").classList.toggle("hidden", t !== "matching");
+  $("fWord").classList.toggle("hidden", t !== "word");
 };
 
 $("addQBtn").onclick = async () => {
@@ -324,14 +352,33 @@ $("addQBtn").onclick = async () => {
     content = { options: filled, answer: opts.slice(0, ans).filter(Boolean).length };
   } else if (type === "truefalse") {
     content = { answer: document.querySelector('input[name="tf"]:checked').value === "true" };
-  } else {
+  } else if (type === "fill") {
     const answers = $("fillAns").value.split(",").map(s => s.trim()).filter(Boolean);
     if (!answers.length) { msg.textContent = "正解を入力してください。"; return; }
     content = { answers };
+  } else if (type === "multiple") {
+    const opts = [0,1,2,3].map(i => $("o" + i).value.trim());
+    const chk = [...document.querySelectorAll('input[name="sc"]:checked')].map(e => Number(e.value));
+    const filled = opts.filter(Boolean);
+    if (filled.length < 2) { msg.textContent = "選択肢を2つ以上入力してください。"; return; }
+    if (!chk.length || chk.some(i => !opts[i])) { msg.textContent = "正解を1つ以上チェックしてください(空の選択肢は選べません)。"; return; }
+    content = { options: filled, answers: chk.map(i => opts.slice(0, i).filter(Boolean).length) };
+  } else if (type === "ordering") {
+    const items = $("ordText").value.split("\n").map(s => s.trim()).filter(Boolean);
+    if (items.length < 2 || items.length > 6) { msg.textContent = "2〜6個、1行に1つずつ入力してください。"; return; }
+    content = { items };
+  } else if (type === "matching") {
+    const pairs = $("matchText").value.split("\n").map(l => l.replace("\uFF1D", "=").split("=").map(s => s.trim())).filter(p => p.length === 2 && p[0] && p[1]);
+    if (pairs.length < 2 || pairs.length > 6) { msg.textContent = "「左 = 右」の形で、2〜6組入力してください。"; return; }
+    content = { pairs };
+  } else {
+    const meaning = $("meaningIn").value.trim();
+    if (!meaning) { msg.textContent = "意味を入力してください。"; return; }
+    content = { meaning };
   }
   const { error } = await db.from("questions").insert({ set_id: curSet.id, type, body, explanation: $("qExpIn").value.trim() || null, content });
   if (error) { msg.textContent = "追加できませんでした。もう一度試してください。"; return; }
-  ["qBodyIn","o0","o1","o2","o3","fillAns","qExpIn"].forEach(id => $(id).value = "");
+  ["qBodyIn","o0","o1","o2","o3","fillAns","qExpIn","ordText","matchText","meaningIn"].forEach(id => $(id).value = "");
   msg.className = "msg ok"; msg.textContent = "追加しました。";
   loadQs();
 };
@@ -368,11 +415,50 @@ function renderQ(){
   } else if (q.type === "truefalse") {
     mk("正しい", () => judge(q, c.answer === true, c.answer ? "正しい" : "誤り"));
     mk("誤り", () => judge(q, c.answer === false, c.answer ? "正しい" : "誤り"));
-  } else {
+  } else if (q.type === "fill") {
     const inp = document.createElement("input"); inp.type = "text"; inp.setAttribute("aria-label", "答え"); ans.append(inp);
     mk("答える", () => judge(q, c.answers.map(norm).includes(norm(inp.value)), c.answers[0]));
+  } else if (q.type === "multiple") {
+    const picked = new Set();
+    c.options.forEach((o, i) => { const b = mk(o, () => {
+      if (picked.has(i)) picked.delete(i); else picked.add(i);
+      b.style.background = picked.has(i) ? "var(--yel)" : "#fff";
+    }); });
+    mk("これで答える", () => judge(q, picked.size === c.answers.length && c.answers.every(i => picked.has(i)), correctText(q))).style.background = "var(--mint)";
+  } else if (q.type === "ordering") {
+    const order = [], items = c.items.map((t, i) => ({ t, i })).sort(() => Math.random() - .5);
+    const line = document.createElement("p"); line.style.fontWeight = "900"; line.textContent = "正しい順にタップ"; ans.append(line);
+    const btns = items.map(it => { const b = mk(it.t, () => {
+      order.push(it.i); b.disabled = true;
+      line.textContent = order.map(i => c.items[i]).join(" → ");
+      if (order.length === items.length) judge(q, order.every((v, k) => v === k), correctText(q));
+    }); return b; });
+    mk("やりなおす", () => { order.length = 0; btns.forEach(b => b.disabled = false); line.textContent = "正しい順にタップ"; }, "skip");
+  } else if (q.type === "matching") {
+    const R = c.pairs.map((p, i) => ({ t: p[1], i })).sort(() => Math.random() - .5);
+    let sel = null, done = 0, allOk = true;
+    const info = document.createElement("p"); info.style.fontWeight = "900"; info.textContent = "左を選んで、合う右を選ぶ"; ans.append(info);
+    const lb = c.pairs.map((p, i) => mk(p[0], () => {
+      if (sel !== null) lb[sel].style.background = "#fff";
+      sel = i; lb[i].style.background = "var(--yel)";
+    }));
+    R.forEach(r => { const b = mk("→ " + r.t, () => {
+      if (sel === null) return;
+      const ok = sel === r.i; if (!ok) allOk = false;
+      lb[sel].disabled = true; b.disabled = true;
+      lb[sel].style.background = b.style.background = ok ? "var(--mint)" : "var(--cor)";
+      sel = null; done++;
+      if (done === c.pairs.length) judge(q, allOk, correctText(q));
+    }); });
+  } else if (q.type === "word") {
+    mk("答えを見る", () => {
+      ans.replaceChildren();
+      const m = document.createElement("p"); m.style.cssText = "font-size:22px;font-weight:900"; m.textContent = c.meaning; ans.append(m);
+      mk("覚えてた", () => judge(q, true, c.meaning));
+      mk("まだ覚えてない", () => judge(q, false, c.meaning), "skip");
+    });
   }
-  mk("わからない", () => judge(q, null, q.type === "single" ? c.options[c.answer] : q.type === "truefalse" ? (c.answer ? "正しい" : "誤り") : c.answers[0]), "skip");
+  mk("わからない", () => judge(q, null, correctText(q)), "skip");
 }
 
 async function judge(q, ok, correctText){
