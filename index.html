@@ -107,6 +107,7 @@ button:disabled{opacity:.55;cursor:default}
   </div>
 
   <button id="reviewBtn" class="wide" style="margin-top:0;margin-bottom:26px;background:var(--mint)" disabled>復習する</button>
+  <button id="battleBtn" class="wide" style="margin-top:-12px;margin-bottom:26px;background:var(--cor)">対戦する</button>
 
   <div class="panel">
     <h2>問題集をつくる</h2>
@@ -191,9 +192,37 @@ button:disabled{opacity:.55;cursor:default}
     <img id="qImg" class="hidden" alt="問題の画像">
     <div id="qAnswer"></div>
     <p id="qFeedback" class="msg" role="status"></p>
-    <p id="qExp"></p>
+    <p id="qExp" style="white-space:pre-wrap"></p>
+    <div id="bScore" class="hidden" style="font-weight:900;border-top:3px solid var(--line);padding-top:10px"></div>
   </div>
   <button id="nextBtn" class="wide hidden">次へ</button>
+</section>
+
+<section id="battleView" class="hidden">
+  <button id="battleBack" class="ghost">ホームへ</button>
+  <h1 style="margin:14px 0 18px">対戦</h1>
+  <div id="bMenu">
+    <div class="panel">
+      <h2>部屋をつくる</h2>
+      <label for="bSet">問題集(ランダムで最大10問)</label>
+      <select id="bSet"></select>
+      <button id="bCreate" class="wide">部屋をつくる</button>
+    </div>
+    <div class="panel">
+      <h2>部屋に入る</h2>
+      <label for="bCode">4けたのコード</label>
+      <input id="bCode" type="text" inputmode="numeric" maxlength="4" autocomplete="off">
+      <button id="bJoin" class="wide">入る</button>
+    </div>
+    <p id="bMsg" class="msg" role="alert" style="color:var(--yel)"></p>
+  </div>
+  <div id="bRoom" class="panel hidden">
+    <h2 id="bTitle"></h2>
+    <p>コード: <b id="bCodeShow" style="font-size:34px;letter-spacing:.1em"></b></p>
+    <div id="bPlayers" style="font-weight:900"></div>
+    <button id="bStart" class="wide hidden">はじめる</button>
+    <p id="bWait"></p>
+  </div>
 </section>
 
 <section id="settingsView" class="hidden">
@@ -228,7 +257,7 @@ const $ = id => document.getElementById(id);
 let me = null, profile = null;
 
 function show(view){
-  ["login","home","set","quiz","settings"].forEach(n => $(n + "View").classList.toggle("hidden", n !== view));
+  ["login","home","set","quiz","settings","battle"].forEach(n => $(n + "View").classList.toggle("hidden", n !== view));
   window.scrollTo(0, 0);
 }
 
@@ -460,8 +489,8 @@ $("playBtn").onclick = () => {
   show("quiz"); renderQ();
 };
 function leaveQuiz(){ if (reviewMode || quizFrom === "home") { show("home"); loadSets(); } else { show("set"); loadQs(); } }
-$("quitBtn").onclick = () => { show("home"); loadSets(); };
-$("nextBtn").onclick = () => { if (finished) leaveQuiz(); else { qi++; renderQ(); } };
+$("quitBtn").onclick = () => { leaveBattle(); show("home"); loadSets(); };
+$("nextBtn").onclick = () => { if (battle) { battleNext(); return; } if (finished) leaveQuiz(); else { qi++; renderQ(); } };
 
 function renderQ(){
   const ans = $("qAnswer"); ans.replaceChildren();
@@ -484,7 +513,7 @@ function renderQ(){
   $("nextBtn").textContent = qi + 1 < qs.length ? "次へ" : "結果を見る";
   const mk = (label, fn, cls) => { const b = document.createElement("button"); b.className = "choice " + (cls || ""); b.textContent = label; b.onclick = fn; ans.append(b); return b; };
   if (q.type === "single") {
-    c.options.forEach((o, i) => mk(o, () => judge(q, i === c.answer, c.options[c.answer])));
+    shuf(c.options.map((o, i) => i)).forEach(i => mk(c.options[i], () => judge(q, i === c.answer, c.options[c.answer])));
   } else if (q.type === "truefalse") {
     mk("正しい", () => judge(q, c.answer === true, c.answer ? "正しい" : "誤り"));
     mk("誤り", () => judge(q, c.answer === false, c.answer ? "正しい" : "誤り"));
@@ -493,7 +522,7 @@ function renderQ(){
     mk("答える", () => judge(q, c.answers.map(norm).includes(norm(inp.value)), c.answers[0]));
   } else if (q.type === "multiple") {
     const picked = new Set();
-    c.options.forEach((o, i) => { const b = mk(o, () => {
+    shuf(c.options.map((o, i) => i)).forEach(i => { const o = c.options[i]; const b = mk(o, () => {
       if (picked.has(i)) picked.delete(i); else picked.add(i);
       b.style.background = picked.has(i) ? "var(--yel)" : "#fff";
     }); });
@@ -525,7 +554,10 @@ function renderQ(){
     }); });
     const grid = document.createElement("div"); grid.style.cssText = "display:grid;grid-template-columns:1fr 1fr;gap:0 10px;align-items:start";
     const colL = document.createElement("div"), colR = document.createElement("div"); grid.append(colL, colR);
-    [...ans.querySelectorAll("button.choice")].forEach(b => { b.style.fontSize = "15px"; (lb.includes(b) ? colL : colR).append(b); });
+    const all = [...ans.querySelectorAll("button.choice")];
+    all.forEach(b => b.style.fontSize = "15px");
+    shuf(lb).forEach(b => colL.append(b));
+    all.filter(b => !lb.includes(b)).forEach(b => colR.append(b));
     ans.append(grid);
   } else if (q.type === "word") {
     mk("答えを見る", () => {
@@ -535,11 +567,18 @@ function renderQ(){
       mk("まだ覚えてない", () => judge(q, false, c.meaning), "skip");
     });
   }
-  mk("わからない", () => judge(q, null, correctText(q)), "skip");
+  if (!battle) mk("わからない", () => judge(q, null, correctText(q)), "skip");
 }
 
 async function judge(q, ok, correctText){
   $("qAnswer").querySelectorAll("button,input").forEach(e => e.disabled = true);
+  if (battle) {
+    battle.answered = true;
+    const f = $("qFeedback"); f.className = "msg pop" + (ok ? " ok" : "");
+    f.textContent = ok ? "正解!判定中…" : "ざんねん(−1点)";
+    await db.rpc("answer_question", { p_room: battle.id, p_q: battle.shown, p_correct: ok === true });
+    pollBattle(); return;
+  }
   if (ok) score++;
   const fb = $("qFeedback");
   fb.className = "msg pop" + (ok ? " ok" : "");
@@ -547,6 +586,111 @@ async function judge(q, ok, correctText){
   $("qExp").textContent = q.explanation || "";
   $("nextBtn").classList.remove("hidden");
   await db.from("attempts").insert({ question_id: q.id, result: ok === null ? "unsure" : ok ? "correct" : "wrong" });
+}
+
+let battle = null, battleTimer = null;
+
+function leaveBattle(){
+  clearInterval(battleTimer); battleTimer = null; battle = null;
+  $("bScore").classList.add("hidden");
+}
+
+$("battleBtn").onclick = async () => {
+  const { data } = await db.from("quiz_sets").select("id,title").order("created_at", { ascending: false });
+  const sel = $("bSet"); sel.replaceChildren();
+  for (const s of data || []) { const o = document.createElement("option"); o.value = s.id; o.textContent = s.title; sel.append(o); }
+  $("bMsg").textContent = ""; $("bRoom").classList.add("hidden"); $("bMenu").classList.remove("hidden");
+  show("battle");
+};
+$("battleBack").onclick = () => { leaveBattle(); show("home"); loadSets(); };
+
+function enterRoom(id){
+  leaveBattle();
+  battle = { id, shown: -1, answered: false, revealDone: false, qs: null, room: null, players: [], busy: false };
+  battleTimer = setInterval(pollBattle, 1000); pollBattle();
+}
+$("bCreate").onclick = async () => {
+  const { data, error } = await db.rpc("create_room", { p_set: $("bSet").value });
+  if (error) { $("bMsg").textContent = "部屋をつくれませんでした。問題集に問題があるか確認してください。"; return; }
+  enterRoom(data);
+};
+$("bJoin").onclick = async () => {
+  const { data, error } = await db.rpc("join_room", { p_code: $("bCode").value.trim() });
+  if (error) { $("bMsg").textContent = "入れませんでした。コードが違うか、すでに始まっています。"; return; }
+  enterRoom(data);
+};
+$("bStart").onclick = async () => { await db.rpc("start_room", { p_room: battle.id }); pollBattle(); };
+
+async function battleNext(){
+  if (battle.room.status === "finished") { leaveBattle(); show("home"); loadSets(); return; }
+  $("nextBtn").classList.add("hidden");
+  await db.rpc("next_question", { p_room: battle.id }); pollBattle();
+}
+
+async function pollBattle(){
+  const bt = battle;
+  if (!bt || bt.busy) return;
+  bt.busy = true;
+  try {
+    const [a, b] = await Promise.all([
+      db.from("rooms").select("*").eq("id", bt.id).single(),
+      db.from("room_players").select("user_id,score,profiles(display_name)").eq("room_id", bt.id)
+    ]);
+    if (battle !== bt || !a.data) return;
+    bt.room = a.data; bt.players = (b.data || []).sort((x, y) => y.score - x.score);
+    await renderBattle();
+  } finally { bt.busy = false; }
+}
+
+function pname(p){ return (p.profiles && p.profiles.display_name) || "?"; }
+
+async function renderBattle(){
+  const r = battle.room, host = r.host_id === me.id;
+  if (r.status === "waiting") {
+    $("bMenu").classList.add("hidden"); $("bRoom").classList.remove("hidden");
+    $("bTitle").textContent = r.set_title; $("bCodeShow").textContent = r.code;
+    $("bPlayers").textContent = "参加者: " + battle.players.map(pname).join("、");
+    $("bStart").classList.toggle("hidden", !host);
+    $("bWait").textContent = host ? "全員が入ったら、はじめる。" : "ホストが始めるのを待っています。";
+    return;
+  }
+  if (!battle.qs) {
+    const { data } = await db.from("questions").select("*").in("id", r.question_ids);
+    const m = new Map((data || []).map(q => [q.id, q]));
+    battle.qs = r.question_ids.map(id => m.get(id)).filter(Boolean);
+  }
+  const sc = $("bScore"); sc.classList.remove("hidden"); sc.replaceChildren();
+  battle.players.forEach((p, i) => { const d = document.createElement("div"); d.textContent = (i + 1) + "位  " + pname(p) + "  " + p.score + "点"; sc.append(d); });
+  if (r.status === "finished") {
+    clearInterval(battleTimer); battleTimer = null;
+    show("quiz"); finished = true;
+    $("progress").textContent = "対戦おわり"; $("qBody").textContent = "結果"; $("qImg").classList.add("hidden");
+    $("qAnswer").replaceChildren(); $("qExp").textContent = "";
+    $("qFeedback").className = "msg ok pop";
+    $("qFeedback").textContent = battle.players.length ? "優勝: " + pname(battle.players[0]) + "さん" : "";
+    $("nextBtn").textContent = "ホームにもどる"; $("nextBtn").classList.remove("hidden");
+    return;
+  }
+  if (battle.shown !== r.q_index) {
+    battle.shown = r.q_index; battle.answered = false; battle.revealDone = false;
+    qs = battle.qs; qi = r.q_index; finished = false; reviewMode = false;
+    show("quiz"); renderQ(); $("nextBtn").classList.add("hidden");
+  }
+  if (r.phase === "reveal" && !battle.revealDone) {
+    battle.revealDone = true;
+    const q = qs[qi], w = battle.players.find(p => p.user_id === r.winner_id);
+    $("qAnswer").querySelectorAll("button,input").forEach(e => e.disabled = true);
+    $("qFeedback").className = "msg" + (r.winner_id === me.id ? " ok pop" : "");
+    $("qFeedback").textContent = w ? (r.winner_id === me.id ? "あなたが正解!+1点" : pname(w) + "さんが正解") : "だれも正解できませんでした";
+    $("qExp").textContent = "正解: " + correctText(q) + (q.explanation ? "\n" + q.explanation : "");
+    if (host) { $("nextBtn").textContent = qi + 1 < battle.qs.length ? "次の問題へ" : "結果を見る"; $("nextBtn").classList.remove("hidden"); }
+  }
+}
+
+function shuf(a){
+  const b = [...a];
+  for (let i = b.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [b[i], b[j]] = [b[j], b[i]]; }
+  return b;
 }
 
 let editingQ = null;
