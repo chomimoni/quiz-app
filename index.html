@@ -50,6 +50,7 @@ textarea{min-height:76px;resize:vertical}
 .row input[type=text]{flex:1}
 .choice{display:block;width:100%;margin-top:12px;text-align:left;background:#fff;font-size:17px}
 .choice.skip{background:#e4e0ff;font-size:14px;text-align:center}
+button:disabled{opacity:.55;cursor:default}
 .choice:disabled{opacity:.55;cursor:default}
 #qFeedback{font-size:24px;font-weight:900}
 #qFeedback.pop{animation:pop .35s ease-out}
@@ -98,6 +99,8 @@ textarea{min-height:76px;resize:vertical}
     </div>
     <button id="logoutBtn" class="ghost">ログアウト</button>
   </div>
+
+  <button id="reviewBtn" class="wide" style="margin-top:0;margin-bottom:26px;background:var(--mint)" disabled>復習する</button>
 
   <div class="panel">
     <h2>問題集をつくる</h2>
@@ -221,6 +224,7 @@ $("suBtn").onclick = async () => {
 $("logoutBtn").onclick = async () => { await db.auth.signOut(); me = null; show("login"); };
 
 async function loadSets(){
+  updateReview();
   const list = $("list"); list.replaceChildren();
   const { data, error } = await db.from("quiz_sets")
     .select("id,title,is_public,owner_id,profiles(display_name)")
@@ -333,11 +337,13 @@ $("addQBtn").onclick = async () => {
 };
 
 $("playBtn").onclick = () => {
+  reviewMode = false;
   qs = [...curQs].sort(() => Math.random() - .5); qi = 0; score = 0; finished = false;
   show("quiz"); renderQ();
 };
-$("quitBtn").onclick = () => { show("set"); loadQs(); };
-$("nextBtn").onclick = () => { if (finished) { show("set"); loadQs(); } else { qi++; renderQ(); } };
+function leaveQuiz(){ if (reviewMode) { show("home"); loadSets(); } else { show("set"); loadQs(); } }
+$("quitBtn").onclick = leaveQuiz;
+$("nextBtn").onclick = () => { if (finished) leaveQuiz(); else { qi++; renderQ(); } };
 
 function renderQ(){
   const ans = $("qAnswer"); ans.replaceChildren();
@@ -349,7 +355,7 @@ function renderQ(){
     $("qBody").textContent = "結果";
     $("qFeedback").className = "msg ok pop";
     $("qFeedback").textContent = qs.length + "問中 " + score + "問 正解";
-    $("nextBtn").textContent = "問題集にもどる"; $("nextBtn").classList.remove("hidden");
+    $("nextBtn").textContent = reviewMode ? "ホームにもどる" : "問題集にもどる"; $("nextBtn").classList.remove("hidden");
     return;
   }
   const q = qs[qi], c = q.content;
@@ -379,6 +385,29 @@ async function judge(q, ok, correctText){
   $("nextBtn").classList.remove("hidden");
   await db.from("attempts").insert({ question_id: q.id, result: ok === null ? "unsure" : ok ? "correct" : "wrong" });
 }
+
+let reviewMode = false, reviewIds = [];
+
+async function updateReview(){
+  const { data } = await db.from("attempts").select("question_id,result").order("created_at", { ascending: false }).limit(1000);
+  const seen = new Set(); reviewIds = [];
+  for (const a of data || []) {
+    if (seen.has(a.question_id)) continue;
+    seen.add(a.question_id);
+    if (a.result !== "correct") reviewIds.push(a.question_id);
+  }
+  const b = $("reviewBtn");
+  b.textContent = reviewIds.length ? "復習する(" + reviewIds.length + "問)" : "復習する";
+  b.disabled = !reviewIds.length;
+}
+
+$("reviewBtn").onclick = async () => {
+  const { data } = await db.from("questions").select("*").in("id", reviewIds);
+  if (!data || !data.length) { alert("復習する問題がありません。"); return; }
+  reviewMode = true;
+  qs = [...data].sort(() => Math.random() - .5); qi = 0; score = 0; finished = false;
+  show("quiz"); renderQ();
+};
 
 boot();
 </script>
