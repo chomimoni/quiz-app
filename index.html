@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="クイズ暗記">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#1B1A3A">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;900&display=swap" rel="stylesheet">
+<title>クイズ暗記</title>
+<style>
+:root{--ink:#1B1A3A;--yel:#FFD23F;--cor:#FF5C7A;--mint:#2EE6A6;--cloud:#F6F4FF;--line:#1B1A3A}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%}
+body{font-family:"Zen Maru Gothic","Hiragino Maru Gothic ProN","Hiragino Sans",sans-serif;font-weight:500;background:var(--ink);color:var(--ink);
+ padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+.wrap{max-width:520px;margin:0 auto;padding:20px 16px 40px}
+h1{font-weight:900;font-size:34px;line-height:1.15;margin:0;color:var(--yel);letter-spacing:.02em}
+h2{font-weight:900;font-size:20px;margin:0 0 12px}
+.sub{color:#cfcbff;margin:6px 0 22px}
+.panel{background:var(--cloud);border:3px solid var(--line);border-radius:22px;padding:18px;box-shadow:0 6px 0 var(--cor);margin-bottom:26px}
+label{display:block;font-weight:900;margin:12px 0 6px}
+input[type=email],input[type=password],input[type=text]{width:100%;font:inherit;font-size:16px;padding:12px 14px;border:3px solid var(--line);border-radius:14px;background:#fff}
+input:focus-visible,button:focus-visible{outline:4px solid var(--mint);outline-offset:2px}
+button{font:inherit;font-weight:900;cursor:pointer;border:3px solid var(--line);border-radius:16px;padding:12px 18px;background:var(--yel);color:var(--ink);box-shadow:0 5px 0 var(--ink);transition:transform .08s,box-shadow .08s}
+button:active{transform:translateY(4px);box-shadow:0 1px 0 var(--ink)}
+button.wide{width:100%;margin-top:18px;font-size:18px}
+button.ghost{background:transparent;color:var(--cloud);border-color:var(--cloud);box-shadow:none;padding:8px 14px;font-size:14px}
+button.small{padding:6px 12px;font-size:13px;background:#fff;box-shadow:0 3px 0 var(--ink)}
+.top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:6px}
+.msg{min-height:1.4em;margin:12px 0 0;font-weight:900;color:#b3002a}
+.msg.ok{color:#00794f}
+.set{background:#fff;border:3px solid var(--line);border-radius:18px;padding:14px 16px;margin-bottom:14px;box-shadow:0 4px 0 var(--mint)}
+.set b{font-size:18px;display:block;word-break:break-word}
+.meta{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:8px;font-size:13px}
+.tag{border:2px solid var(--line);border-radius:99px;padding:2px 10px;font-weight:900;background:var(--yel)}
+.tag.priv{background:#e4e0ff}
+.empty{color:#cfcbff;border:3px dashed #6b67b3;border-radius:18px;padding:22px;text-align:center}
+.chk{display:flex;align-items:center;gap:10px;margin-top:14px;font-weight:900}
+.chk input{width:24px;height:24px;accent-color:var(--cor)}
+.hidden{display:none}
+@media (prefers-reduced-motion:reduce){button{transition:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<section id="loginView" class="hidden">
+  <h1>クイズ暗記</h1>
+  <p class="sub">招待された人だけが入れます。</p>
+  <div class="panel">
+    <label for="email">メールアドレス</label>
+    <input id="email" type="email" autocomplete="email" inputmode="email">
+    <label for="pw">パスワード</label>
+    <input id="pw" type="password" autocomplete="current-password">
+    <button id="loginBtn" class="wide">ログインする</button>
+    <p id="loginMsg" class="msg" role="alert"></p>
+  </div>
+</section>
+
+<section id="homeView" class="hidden">
+  <div class="top">
+    <div>
+      <h1 id="hello">ホーム</h1>
+      <p class="sub" id="roleLine"></p>
+    </div>
+    <button id="logoutBtn" class="ghost">ログアウト</button>
+  </div>
+
+  <div class="panel">
+    <h2>問題集をつくる</h2>
+    <label for="newTitle">タイトル</label>
+    <input id="newTitle" type="text" maxlength="60">
+    <label class="chk"><input id="newPublic" type="checkbox"> みんなに公開する</label>
+    <button id="createBtn" class="wide">つくる</button>
+    <p id="createMsg" class="msg" role="status"></p>
+  </div>
+
+  <h2 style="color:var(--yel)">問題集</h2>
+  <div id="list"></div>
+</section>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script>
+const SUPABASE_URL = "https://swxxphiqzwnpbkgzlhfe.supabase.co";
+const SUPABASE_KEY = "sb_publishable_Qh6o1Oy5vppxrsnPTHhCEw_OPwOW8Cx";
+const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const $ = id => document.getElementById(id);
+let me = null, profile = null;
+
+function show(view){
+  $("loginView").classList.toggle("hidden", view !== "login");
+  $("homeView").classList.toggle("hidden", view !== "home");
+}
+
+async function boot(){
+  const { data } = await db.auth.getSession();
+  if (data.session) await enter(data.session.user); else show("login");
+}
+
+async function enter(user){
+  me = user;
+  const { data } = await db.from("profiles").select("display_name,is_admin").eq("id", user.id).single();
+  profile = data || { display_name: "ゲスト", is_admin: false };
+  $("hello").textContent = profile.display_name + "さん";
+  $("roleLine").textContent = profile.is_admin ? "管理者(他の人の非公開も閲覧のみ可)" : "今日も1問ずつ覚えよう";
+  show("home");
+  loadSets();
+}
+
+$("loginBtn").onclick = async () => {
+  const msg = $("loginMsg"); msg.textContent = "";
+  const { data, error } = await db.auth.signInWithPassword({ email: $("email").value.trim(), password: $("pw").value });
+  if (error) { msg.textContent = "ログインできません。メールとパスワードを確認してください。"; return; }
+  $("pw").value = "";
+  enter(data.user);
+};
+
+$("logoutBtn").onclick = async () => { await db.auth.signOut(); me = null; show("login"); };
+
+async function loadSets(){
+  const list = $("list"); list.replaceChildren();
+  const { data, error } = await db.from("quiz_sets")
+    .select("id,title,is_public,owner_id,profiles(display_name)")
+    .order("created_at", { ascending: false });
+  if (error) { const p = document.createElement("p"); p.className = "empty"; p.textContent = "読み込めませんでした。画面を引き下げて更新してください。"; list.append(p); return; }
+  if (!data.length) { const p = document.createElement("p"); p.className = "empty"; p.textContent = "まだ問題集がありません。上のフォームから最初の1つをつくろう。"; list.append(p); return; }
+  for (const s of data) {
+    const card = document.createElement("div"); card.className = "set";
+    const t = document.createElement("b"); t.textContent = s.title;
+    const meta = document.createElement("div"); meta.className = "meta";
+    const tag = document.createElement("span"); tag.className = "tag" + (s.is_public ? "" : " priv"); tag.textContent = s.is_public ? "公開" : "非公開";
+    const who = document.createElement("span");
+    who.textContent = s.owner_id === me.id ? "自分の問題集" : "作成: " + (s.profiles?.display_name || "不明");
+    meta.append(tag, who);
+    if (s.owner_id === me.id) {
+      const del = document.createElement("button"); del.className = "small"; del.textContent = "削除";
+      del.onclick = async () => {
+        if (!confirm("「" + s.title + "」を削除しますか?中の問題も消えます。")) return;
+        await db.from("quiz_sets").delete().eq("id", s.id); loadSets();
+      };
+      meta.append(del);
+    }
+    card.append(t, meta); list.append(card);
+  }
+}
+
+$("createBtn").onclick = async () => {
+  const msg = $("createMsg"); msg.className = "msg"; msg.textContent = "";
+  const title = $("newTitle").value.trim();
+  if (!title) { msg.textContent = "タイトルを入力してください。"; return; }
+  const { error } = await db.from("quiz_sets").insert({ title, is_public: $("newPublic").checked });
+  if (error) { msg.textContent = "つくれませんでした。もう一度試してください。"; return; }
+  $("newTitle").value = ""; $("newPublic").checked = false;
+  msg.className = "msg ok"; msg.textContent = "つくりました。";
+  loadSets();
+};
+
+boot();
+</script>
+</body>
+</html>
