@@ -43,6 +43,18 @@ button.small{padding:6px 12px;font-size:13px;background:#fff;box-shadow:0 3px 0 
 .empty{color:#cfcbff;border:3px dashed #6b67b3;border-radius:18px;padding:22px;text-align:center}
 .chk{display:flex;align-items:center;gap:10px;margin-top:14px;font-weight:900}
 .chk input{width:24px;height:24px;accent-color:var(--cor)}
+textarea,select{width:100%;font:inherit;font-size:16px;padding:12px 14px;border:3px solid var(--line);border-radius:14px;background:#fff}
+textarea{min-height:76px;resize:vertical}
+.row{display:flex;gap:10px;align-items:center;margin-top:8px}
+.row input[type=radio]{width:24px;height:24px;accent-color:var(--cor);flex:none}
+.row input[type=text]{flex:1}
+.choice{display:block;width:100%;margin-top:12px;text-align:left;background:#fff;font-size:17px}
+.choice.skip{background:#e4e0ff;font-size:14px;text-align:center}
+.choice:disabled{opacity:.55;cursor:default}
+#qFeedback{font-size:24px;font-weight:900}
+#qFeedback.pop{animation:pop .35s ease-out}
+@keyframes pop{0%{transform:scale(.6)}70%{transform:scale(1.12)}100%{transform:scale(1)}}
+@media (prefers-reduced-motion:reduce){#qFeedback.pop{animation:none}}
 .hidden{display:none}
 @media (prefers-reduced-motion:reduce){button{transition:none}}
 </style>
@@ -85,6 +97,55 @@ button.small{padding:6px 12px;font-size:13px;background:#fff;box-shadow:0 3px 0 
   <div id="list"></div>
 </section>
 
+<section id="setView" class="hidden">
+  <button id="backHome" class="ghost">もどる</button>
+  <h1 id="setTitle" style="margin-top:14px"></h1>
+  <p class="sub" id="setInfo"></p>
+  <button id="playBtn" class="wide" style="margin-top:0;margin-bottom:26px">クイズをはじめる</button>
+
+  <div id="addPanel" class="panel">
+    <h2>問題を追加する</h2>
+    <label for="qType">形式</label>
+    <select id="qType"><option value="single">単一選択</option><option value="truefalse">正誤</option><option value="fill">穴埋め</option></select>
+    <label for="qBodyIn">問題文</label>
+    <textarea id="qBodyIn" maxlength="500"></textarea>
+    <div id="fSingle">
+      <label>選択肢(正解にチェック・2つ以上)</label>
+      <div class="row"><input type="radio" name="sc" value="0" checked><input type="text" id="o0" placeholder="選択肢1"></div>
+      <div class="row"><input type="radio" name="sc" value="1"><input type="text" id="o1" placeholder="選択肢2"></div>
+      <div class="row"><input type="radio" name="sc" value="2"><input type="text" id="o2" placeholder="選択肢3"></div>
+      <div class="row"><input type="radio" name="sc" value="3"><input type="text" id="o3" placeholder="選択肢4"></div>
+    </div>
+    <div id="fTf" class="hidden">
+      <label>正解</label>
+      <div class="row"><input type="radio" name="tf" value="true" checked> 正しい</div>
+      <div class="row"><input type="radio" name="tf" value="false"> 誤り</div>
+    </div>
+    <div id="fFill" class="hidden">
+      <label for="fillAns">正解(別の書き方も正解にするなら , で区切る)</label>
+      <input type="text" id="fillAns">
+    </div>
+    <label for="qExpIn">解説(なくてもOK)</label>
+    <input type="text" id="qExpIn" maxlength="300">
+    <button id="addQBtn" class="wide">追加する</button>
+    <p id="addMsg" class="msg" role="status"></p>
+  </div>
+
+  <h2 style="color:var(--yel)">問題一覧</h2>
+  <div id="qList"></div>
+</section>
+
+<section id="quizView" class="hidden">
+  <div class="top"><p class="sub" id="progress"></p><button id="quitBtn" class="ghost">やめる</button></div>
+  <div class="panel">
+    <h2 id="qBody"></h2>
+    <div id="qAnswer"></div>
+    <p id="qFeedback" class="msg" role="status"></p>
+    <p id="qExp"></p>
+  </div>
+  <button id="nextBtn" class="wide hidden">次へ</button>
+</section>
+
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
@@ -96,8 +157,8 @@ const $ = id => document.getElementById(id);
 let me = null, profile = null;
 
 function show(view){
-  $("loginView").classList.toggle("hidden", view !== "login");
-  $("homeView").classList.toggle("hidden", view !== "home");
+  ["login","home","set","quiz"].forEach(n => $(n + "View").classList.toggle("hidden", n !== view));
+  window.scrollTo(0, 0);
 }
 
 async function boot(){
@@ -148,6 +209,8 @@ async function loadSets(){
       };
       meta.append(del);
     }
+    const open = document.createElement("button"); open.className = "small"; open.textContent = "開く";
+    open.onclick = () => openSet(s); meta.prepend(open);
     card.append(t, meta); list.append(card);
   }
 }
@@ -162,6 +225,126 @@ $("createBtn").onclick = async () => {
   msg.className = "msg ok"; msg.textContent = "つくりました。";
   loadSets();
 };
+
+let curSet = null, curQs = [], qs = [], qi = 0, score = 0, finished = false;
+const TYPE_NAME = { single: "単一選択", truefalse: "正誤", fill: "穴埋め" };
+const norm = s => String(s).trim().normalize("NFKC").toLowerCase();
+
+function openSet(s){
+  curSet = s;
+  $("setTitle").textContent = s.title;
+  $("setInfo").textContent = s.owner_id === me.id ? "自分の問題集" : "作成: " + (s.profiles?.display_name || "不明");
+  $("addPanel").classList.toggle("hidden", s.owner_id !== me.id);
+  $("addMsg").textContent = "";
+  show("set"); loadQs();
+}
+$("backHome").onclick = () => { show("home"); loadSets(); };
+
+async function loadQs(){
+  const box = $("qList"); box.replaceChildren();
+  const { data, error } = await db.from("questions").select("*").eq("set_id", curSet.id).order("created_at");
+  curQs = data || [];
+  $("playBtn").disabled = !curQs.length;
+  if (error || !curQs.length) {
+    const p = document.createElement("p"); p.className = "empty";
+    p.textContent = error ? "読み込めませんでした。" : "まだ問題がありません。";
+    box.append(p); return;
+  }
+  for (const q of curQs) {
+    const card = document.createElement("div"); card.className = "set";
+    const b = document.createElement("b"); b.textContent = q.body;
+    const meta = document.createElement("div"); meta.className = "meta";
+    const tag = document.createElement("span"); tag.className = "tag"; tag.textContent = TYPE_NAME[q.type] || q.type;
+    meta.append(tag);
+    if (curSet.owner_id === me.id) {
+      const del = document.createElement("button"); del.className = "small"; del.textContent = "削除";
+      del.onclick = async () => { if (!confirm("この問題を削除しますか?")) return; await db.from("questions").delete().eq("id", q.id); loadQs(); };
+      meta.append(del);
+    }
+    card.append(b, meta); box.append(card);
+  }
+}
+
+$("qType").onchange = () => {
+  const t = $("qType").value;
+  $("fSingle").classList.toggle("hidden", t !== "single");
+  $("fTf").classList.toggle("hidden", t !== "truefalse");
+  $("fFill").classList.toggle("hidden", t !== "fill");
+};
+
+$("addQBtn").onclick = async () => {
+  const msg = $("addMsg"); msg.className = "msg"; msg.textContent = "";
+  const type = $("qType").value, body = $("qBodyIn").value.trim();
+  if (!body) { msg.textContent = "問題文を入力してください。"; return; }
+  let content;
+  if (type === "single") {
+    const opts = [0,1,2,3].map(i => $("o" + i).value.trim());
+    const ans = Number(document.querySelector('input[name="sc"]:checked').value);
+    const filled = opts.filter(Boolean);
+    if (filled.length < 2) { msg.textContent = "選択肢を2つ以上入力してください。"; return; }
+    if (!opts[ans]) { msg.textContent = "正解にチェックした選択肢が空です。"; return; }
+    content = { options: filled, answer: opts.slice(0, ans).filter(Boolean).length };
+  } else if (type === "truefalse") {
+    content = { answer: document.querySelector('input[name="tf"]:checked').value === "true" };
+  } else {
+    const answers = $("fillAns").value.split(",").map(s => s.trim()).filter(Boolean);
+    if (!answers.length) { msg.textContent = "正解を入力してください。"; return; }
+    content = { answers };
+  }
+  const { error } = await db.from("questions").insert({ set_id: curSet.id, type, body, explanation: $("qExpIn").value.trim() || null, content });
+  if (error) { msg.textContent = "追加できませんでした。もう一度試してください。"; return; }
+  ["qBodyIn","o0","o1","o2","o3","fillAns","qExpIn"].forEach(id => $(id).value = "");
+  msg.className = "msg ok"; msg.textContent = "追加しました。";
+  loadQs();
+};
+
+$("playBtn").onclick = () => {
+  qs = [...curQs].sort(() => Math.random() - .5); qi = 0; score = 0; finished = false;
+  show("quiz"); renderQ();
+};
+$("quitBtn").onclick = () => { show("set"); loadQs(); };
+$("nextBtn").onclick = () => { if (finished) { show("set"); loadQs(); } else { qi++; renderQ(); } };
+
+function renderQ(){
+  const ans = $("qAnswer"); ans.replaceChildren();
+  $("qFeedback").textContent = ""; $("qFeedback").className = "msg"; $("qExp").textContent = "";
+  $("nextBtn").classList.add("hidden");
+  if (qi >= qs.length) {
+    finished = true;
+    $("progress").textContent = "おつかれさま";
+    $("qBody").textContent = "結果";
+    $("qFeedback").className = "msg ok pop";
+    $("qFeedback").textContent = qs.length + "問中 " + score + "問 正解";
+    $("nextBtn").textContent = "問題集にもどる"; $("nextBtn").classList.remove("hidden");
+    return;
+  }
+  const q = qs[qi], c = q.content;
+  $("progress").textContent = (qi + 1) + " / " + qs.length;
+  $("qBody").textContent = q.body;
+  $("nextBtn").textContent = qi + 1 < qs.length ? "次へ" : "結果を見る";
+  const mk = (label, fn, cls) => { const b = document.createElement("button"); b.className = "choice " + (cls || ""); b.textContent = label; b.onclick = fn; ans.append(b); return b; };
+  if (q.type === "single") {
+    c.options.forEach((o, i) => mk(o, () => judge(q, i === c.answer, c.options[c.answer])));
+  } else if (q.type === "truefalse") {
+    mk("正しい", () => judge(q, c.answer === true, c.answer ? "正しい" : "誤り"));
+    mk("誤り", () => judge(q, c.answer === false, c.answer ? "正しい" : "誤り"));
+  } else {
+    const inp = document.createElement("input"); inp.type = "text"; inp.setAttribute("aria-label", "答え"); ans.append(inp);
+    mk("答える", () => judge(q, c.answers.map(norm).includes(norm(inp.value)), c.answers[0]));
+  }
+  mk("わからない", () => judge(q, null, q.type === "single" ? c.options[c.answer] : q.type === "truefalse" ? (c.answer ? "正しい" : "誤り") : c.answers[0]), "skip");
+}
+
+async function judge(q, ok, correctText){
+  $("qAnswer").querySelectorAll("button,input").forEach(e => e.disabled = true);
+  if (ok) score++;
+  const fb = $("qFeedback");
+  fb.className = "msg pop" + (ok ? " ok" : "");
+  fb.textContent = ok ? "正解!" : (ok === null ? "わからない → 正解は「" : "ざんねん → 正解は「") + correctText + "」";
+  $("qExp").textContent = q.explanation || "";
+  $("nextBtn").classList.remove("hidden");
+  await db.from("attempts").insert({ question_id: q.id, result: ok === null ? "unsure" : ok ? "correct" : "wrong" });
+}
 
 boot();
 </script>
