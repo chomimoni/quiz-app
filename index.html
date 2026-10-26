@@ -107,6 +107,7 @@ button:disabled{opacity:.55;cursor:default}
     <label for="newTitle">タイトル</label>
     <input id="newTitle" type="text" maxlength="60">
     <label class="chk"><input id="newPublic" type="checkbox"> みんなに公開する</label>
+    <label class="chk"><input id="newContrib" type="checkbox"> 他の人も問題を追加できる(公開のとき)</label>
     <button id="createBtn" class="wide">つくる</button>
     <p id="createMsg" class="msg" role="status"></p>
   </div>
@@ -120,6 +121,13 @@ button:disabled{opacity:.55;cursor:default}
   <h1 id="setTitle" style="margin-top:14px"></h1>
   <p class="sub" id="setInfo"></p>
   <button id="playBtn" class="wide" style="margin-top:0;margin-bottom:26px">クイズをはじめる</button>
+
+  <div id="ownerPanel" class="panel hidden">
+    <h2>この問題集の設定</h2>
+    <label class="chk"><input id="setPublic" type="checkbox"> みんなに公開する</label>
+    <label class="chk"><input id="setContrib" type="checkbox"> 他の人も問題を追加できる(公開のとき)</label>
+    <p id="setMsg" class="msg" role="status"></p>
+  </div>
 
   <div id="addPanel" class="panel">
     <h2>問題を追加する</h2>
@@ -239,7 +247,7 @@ async function loadSets(){
   updateReview();
   const list = $("list"); list.replaceChildren();
   const { data, error } = await db.from("quiz_sets")
-    .select("id,title,is_public,owner_id,profiles(display_name)")
+    .select("id,title,is_public,allow_contrib,owner_id,profiles(display_name)")
     .order("created_at", { ascending: false });
   if (error) { const p = document.createElement("p"); p.className = "empty"; p.textContent = "読み込めませんでした。画面を引き下げて更新してください。"; list.append(p); return; }
   if (!data.length) { const p = document.createElement("p"); p.className = "empty"; p.textContent = "まだ問題集がありません。上のフォームから最初の1つをつくろう。"; list.append(p); return; }
@@ -271,9 +279,9 @@ $("createBtn").onclick = async () => {
   const msg = $("createMsg"); msg.className = "msg"; msg.textContent = "";
   const title = $("newTitle").value.trim();
   if (!title) { msg.textContent = "タイトルを入力してください。"; return; }
-  const { error } = await db.from("quiz_sets").insert({ title, is_public: $("newPublic").checked });
+  const { error } = await db.from("quiz_sets").insert({ title, is_public: $("newPublic").checked, allow_contrib: $("newContrib").checked });
   if (error) { msg.textContent = "つくれませんでした。もう一度試してください。"; return; }
-  $("newTitle").value = ""; $("newPublic").checked = false;
+  $("newTitle").value = ""; $("newPublic").checked = false; $("newContrib").checked = false;
   msg.className = "msg ok"; msg.textContent = "つくりました。";
   loadSets();
 };
@@ -296,7 +304,10 @@ function openSet(s){
   curSet = s;
   $("setTitle").textContent = s.title;
   $("setInfo").textContent = s.owner_id === me.id ? "自分の問題集" : "作成: " + (s.profiles?.display_name || "不明");
-  $("addPanel").classList.toggle("hidden", s.owner_id !== me.id);
+  const isOwner = s.owner_id === me.id;
+  $("ownerPanel").classList.toggle("hidden", !isOwner);
+  $("setPublic").checked = !!s.is_public; $("setContrib").checked = !!s.allow_contrib; $("setMsg").textContent = "";
+  $("addPanel").classList.toggle("hidden", !(isOwner || (s.is_public && s.allow_contrib)));
   $("addMsg").textContent = "";
   show("set"); loadQs();
 }
@@ -304,7 +315,7 @@ $("backHome").onclick = () => { show("home"); loadSets(); };
 
 async function loadQs(){
   const box = $("qList"); box.replaceChildren();
-  const { data, error } = await db.from("questions").select("*").eq("set_id", curSet.id).order("created_at");
+  const { data, error } = await db.from("questions").select("*,profiles(display_name)").eq("set_id", curSet.id).order("created_at");
   curQs = data || [];
   $("playBtn").disabled = !curQs.length;
   if (error || !curQs.length) {
@@ -318,7 +329,10 @@ async function loadQs(){
     const meta = document.createElement("div"); meta.className = "meta";
     const tag = document.createElement("span"); tag.className = "tag"; tag.textContent = TYPE_NAME[q.type] || q.type;
     meta.append(tag);
-    if (curSet.owner_id === me.id) {
+    if (q.created_by && q.created_by !== me.id) {
+      const w = document.createElement("span"); w.textContent = "追加: " + (q.profiles?.display_name || "不明"); meta.append(w);
+    }
+    if (curSet.owner_id === me.id || q.created_by === me.id) {
       const del = document.createElement("button"); del.className = "small"; del.textContent = "削除";
       del.onclick = async () => { if (!confirm("この問題を削除しますか?")) return; await db.from("questions").delete().eq("id", q.id); loadQs(); };
       meta.append(del);
@@ -477,6 +491,16 @@ async function judge(q, ok, correctText){
   $("nextBtn").classList.remove("hidden");
   await db.from("attempts").insert({ question_id: q.id, result: ok === null ? "unsure" : ok ? "correct" : "wrong" });
 }
+
+async function saveSetting(){
+  const pub = $("setPublic").checked, con = $("setContrib").checked, msg = $("setMsg");
+  const { error } = await db.from("quiz_sets").update({ is_public: pub, allow_contrib: con }).eq("id", curSet.id);
+  if (error) { msg.className = "msg"; msg.textContent = "保存できませんでした。もう一度試してください。"; return; }
+  curSet.is_public = pub; curSet.allow_contrib = con;
+  msg.className = "msg ok";
+  msg.textContent = con && !pub ? "保存しました。他の人が追加できるのは、公開にしたときです。" : "保存しました。";
+}
+$("setPublic").onchange = saveSetting; $("setContrib").onchange = saveSetting;
 
 let reviewMode = false, reviewIds = [], quizFrom = "set";
 
