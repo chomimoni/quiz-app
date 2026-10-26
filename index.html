@@ -136,7 +136,7 @@ button:disabled{opacity:.55;cursor:default}
   </div>
 
   <div id="addPanel" class="panel">
-    <h2>問題を追加する</h2>
+    <h2 id="addTitle">問題を追加する</h2>
     <label for="qType">形式</label>
     <select id="qType"><option value="single">単一選択</option><option value="multiple">複数選択</option><option value="truefalse">正誤</option><option value="fill">穴埋め</option><option value="ordering">並べ替え</option><option value="matching">マッチング</option><option value="word">単語</option></select>
     <label for="qBodyIn">問題文</label>
@@ -172,9 +172,11 @@ button:disabled{opacity:.55;cursor:default}
     <label for="imgIn">画像(なくてもOK)</label>
     <input type="file" id="imgIn" accept="image/*">
     <img id="imgPrev" alt="選んだ画像" class="hidden" style="max-width:100%;max-height:200px;margin-top:8px;border:3px solid var(--line);border-radius:12px">
+    <label class="chk hidden" id="rmImgRow"><input id="rmImg" type="checkbox"> いまの画像を外す</label>
     <label for="qExpIn">解説(なくてもOK)</label>
     <input type="text" id="qExpIn" maxlength="300">
     <button id="addQBtn" class="wide">追加する</button>
+    <button id="cancelEditBtn" class="wide hidden" style="background:#fff">編集をやめる</button>
     <p id="addMsg" class="msg" role="status"></p>
   </div>
 
@@ -332,7 +334,7 @@ function correctText(q){
 const norm = s => String(s).trim().normalize("NFKC").toLowerCase();
 
 function openSet(s){
-  curSet = s;
+  curSet = s; endEdit();
   $("setTitle").textContent = s.title;
   $("setInfo").textContent = s.owner_id === me.id ? "自分の問題集" : "作成: " + (s.profiles?.display_name || "不明");
   const isOwner = s.owner_id === me.id;
@@ -365,6 +367,8 @@ async function loadQs(){
       const w = document.createElement("span"); w.textContent = "追加: " + (q.profiles?.display_name || "不明"); meta.append(w);
     }
     if (curSet.owner_id === me.id || q.created_by === me.id) {
+      const ed = document.createElement("button"); ed.className = "small"; ed.textContent = "編集";
+      ed.onclick = () => startEdit(q); meta.append(ed);
       const del = document.createElement("button"); del.className = "small"; del.textContent = "削除";
       del.onclick = async () => { if (!confirm("この問題を削除しますか?")) return; await db.from("questions").delete().eq("id", q.id); if (q.image_path) await db.storage.from(BUCKET).remove([q.image_path]); loadQs(); };
       meta.append(del);
@@ -424,7 +428,9 @@ $("addQBtn").onclick = async () => {
     if (!meaning) { msg.textContent = "意味を入力してください。"; return; }
     content = { meaning };
   }
-  let image_path = null;
+  let image_path = editingQ ? editingQ.image_path : null;
+  const oldPath = image_path;
+  if (editingQ && $("rmImg").checked) image_path = null;
   const file = $("imgIn").files[0];
   if (file) {
     try {
@@ -434,12 +440,17 @@ $("addQBtn").onclick = async () => {
       if (up.error) throw up.error;
     } catch (e) { msg.textContent = "画像をアップロードできませんでした。もう一度試してください。"; return; }
   }
-  const { error } = await db.from("questions").insert({ set_id: curSet.id, type, body, explanation: $("qExpIn").value.trim() || null, content, image_path });
-  if (error && image_path) await db.storage.from(BUCKET).remove([image_path]);
-  if (error) { msg.textContent = "追加できませんでした。もう一度試してください。"; return; }
+  const row = { type, body, explanation: $("qExpIn").value.trim() || null, content, image_path };
+  const { error } = editingQ
+    ? await db.from("questions").update(row).eq("id", editingQ.id)
+    : await db.from("questions").insert({ set_id: curSet.id, ...row });
+  if (error && image_path && image_path !== oldPath) await db.storage.from(BUCKET).remove([image_path]);
+  if (!error && editingQ && oldPath && oldPath !== image_path) await db.storage.from(BUCKET).remove([oldPath]);
+  if (error) { msg.textContent = (editingQ ? "保存" : "追加") + "できませんでした。もう一度試してください。"; return; }
   ["qBodyIn","o0","o1","o2","o3","fillAns","qExpIn","ordText","matchText","meaningIn"].forEach(id => $(id).value = "");
   $("imgIn").value = ""; $("imgPrev").classList.add("hidden");
-  msg.className = "msg ok"; msg.textContent = "追加しました。";
+  const wasEdit = !!editingQ; endEdit();
+  msg.className = "msg ok"; msg.textContent = wasEdit ? "保存しました。" : "追加しました。";
   loadQs();
 };
 
@@ -536,6 +547,41 @@ async function judge(q, ok, correctText){
   $("qExp").textContent = q.explanation || "";
   $("nextBtn").classList.remove("hidden");
   await db.from("attempts").insert({ question_id: q.id, result: ok === null ? "unsure" : ok ? "correct" : "wrong" });
+}
+
+let editingQ = null;
+function canAdd(s){ return s.owner_id === me.id || (s.is_public && s.allow_contrib); }
+
+function endEdit(){
+  editingQ = null;
+  ["qBodyIn","o0","o1","o2","o3","fillAns","qExpIn","ordText","matchText","meaningIn","imgIn"].forEach(id => $(id).value = "");
+  $("imgPrev").classList.add("hidden"); $("rmImgRow").classList.add("hidden"); $("rmImg").checked = false;
+  $("addTitle").textContent = "問題を追加する"; $("addQBtn").textContent = "追加する"; $("cancelEditBtn").classList.add("hidden");
+  if (curSet) $("addPanel").classList.toggle("hidden", !canAdd(curSet));
+}
+$("cancelEditBtn").onclick = () => { endEdit(); $("addMsg").textContent = ""; };
+
+function startEdit(q){
+  editingQ = q; const c = q.content;
+  $("qType").value = q.type; $("qType").onchange();
+  $("qBodyIn").value = q.body; $("qExpIn").value = q.explanation || "";
+  [0,1,2,3].forEach(i => $("o" + i).value = (c.options && c.options[i]) || "");
+  document.querySelectorAll('input[name="sc"]').forEach(e => {
+    const i = Number(e.value);
+    e.checked = q.type === "multiple" ? (c.answers || []).includes(i) : i === c.answer;
+  });
+  if (!document.querySelector('input[name="sc"]:checked')) document.querySelector('input[name="sc"]').checked = true;
+  document.querySelectorAll('input[name="tf"]').forEach(e => e.checked = q.type === "truefalse" ? e.value === String(c.answer) : e.value === "true");
+  $("fillAns").value = q.type === "fill" ? c.answers.join(",") : "";
+  $("ordText").value = q.type === "ordering" ? c.items.join("\n") : "";
+  $("matchText").value = q.type === "matching" ? c.pairs.map(p => p[0] + " = " + p[1]).join("\n") : "";
+  $("meaningIn").value = q.type === "word" ? c.meaning : "";
+  $("imgIn").value = ""; $("rmImg").checked = false;
+  if (q.image_path) { $("imgPrev").src = imgUrl(q.image_path); $("imgPrev").classList.remove("hidden"); $("rmImgRow").classList.remove("hidden"); }
+  else { $("imgPrev").classList.add("hidden"); $("rmImgRow").classList.add("hidden"); }
+  $("addTitle").textContent = "問題を編集する"; $("addQBtn").textContent = "保存する"; $("cancelEditBtn").classList.remove("hidden");
+  $("addMsg").textContent = ""; $("addPanel").classList.remove("hidden");
+  $("addPanel").scrollIntoView({ behavior: "smooth" });
 }
 
 $("settingsBtn").onclick = () => {
