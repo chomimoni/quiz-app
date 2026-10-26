@@ -100,7 +100,10 @@ button:disabled{opacity:.55;cursor:default}
       <h1 id="hello">ホーム</h1>
       <p class="sub" id="roleLine"></p>
     </div>
-    <button id="logoutBtn" class="ghost">ログアウト</button>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
+      <button id="settingsBtn" class="ghost">設定</button>
+      <button id="logoutBtn" class="ghost">ログアウト</button>
+    </div>
   </div>
 
   <button id="reviewBtn" class="wide" style="margin-top:0;margin-bottom:26px;background:var(--mint)" disabled>復習する</button>
@@ -191,6 +194,27 @@ button:disabled{opacity:.55;cursor:default}
   <button id="nextBtn" class="wide hidden">次へ</button>
 </section>
 
+<section id="settingsView" class="hidden">
+  <button id="settingsBack" class="ghost">もどる</button>
+  <h1 style="margin:14px 0 18px">設定</h1>
+  <div class="panel">
+    <h2>ニックネーム</h2>
+    <label for="stName">新しいニックネーム</label>
+    <input id="stName" type="text" maxlength="20" autocomplete="nickname">
+    <button id="stNameBtn" class="wide">変更する</button>
+    <p id="stNameMsg" class="msg" role="status"></p>
+  </div>
+  <div class="panel">
+    <h2>パスワード</h2>
+    <label for="stPw">新しいパスワード(8文字以上)</label>
+    <input id="stPw" type="password" autocomplete="new-password">
+    <label for="stPw2">もう一度入力</label>
+    <input id="stPw2" type="password" autocomplete="new-password">
+    <button id="stPwBtn" class="wide">変更する</button>
+    <p id="stPwMsg" class="msg" role="status"></p>
+  </div>
+</section>
+
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
@@ -202,7 +226,7 @@ const $ = id => document.getElementById(id);
 let me = null, profile = null;
 
 function show(view){
-  ["login","home","set","quiz"].forEach(n => $(n + "View").classList.toggle("hidden", n !== view));
+  ["login","home","set","quiz","settings"].forEach(n => $(n + "View").classList.toggle("hidden", n !== view));
   window.scrollTo(0, 0);
 }
 
@@ -513,6 +537,32 @@ async function judge(q, ok, correctText){
   $("nextBtn").classList.remove("hidden");
   await db.from("attempts").insert({ question_id: q.id, result: ok === null ? "unsure" : ok ? "correct" : "wrong" });
 }
+
+$("settingsBtn").onclick = () => {
+  $("stName").value = profile.display_name;
+  ["stNameMsg", "stPwMsg"].forEach(id => { $(id).textContent = ""; $(id).className = "msg"; });
+  show("settings");
+};
+$("settingsBack").onclick = () => show("home");
+
+$("stNameBtn").onclick = async () => {
+  const msg = $("stNameMsg"), name = $("stName").value.trim(); msg.className = "msg";
+  if (!name) { msg.textContent = "ニックネームを入力してください。"; return; }
+  const { error } = await db.from("profiles").update({ display_name: name }).eq("id", me.id);
+  if (error) { msg.textContent = "変更できませんでした。もう一度試してください。"; return; }
+  profile.display_name = name; $("hello").textContent = name + "さん";
+  msg.className = "msg ok"; msg.textContent = "変更しました。";
+};
+
+$("stPwBtn").onclick = async () => {
+  const msg = $("stPwMsg"), pw = $("stPw").value; msg.className = "msg";
+  if (pw.length < 8) { msg.textContent = "パスワードは8文字以上にしてください。"; return; }
+  if (pw !== $("stPw2").value) { msg.textContent = "2回の入力が一致しません。"; return; }
+  const { error } = await db.auth.updateUser({ password: pw });
+  if (error) { msg.textContent = /different/i.test(error.message) ? "今のパスワードとは別のものにしてください。" : "変更できませんでした。もう一度試してください。"; return; }
+  $("stPw").value = ""; $("stPw2").value = "";
+  msg.className = "msg ok"; msg.textContent = "変更しました。次回から新しいパスワードでログインします。";
+};
 
 const BUCKET = "question-images";
 const imgUrl = p => db.storage.from(BUCKET).getPublicUrl(p).data.publicUrl;
