@@ -325,9 +325,12 @@ async function loadSets(){
     .order("created_at", { ascending: false });
   if (error) { const p = document.createElement("p"); p.className = "empty"; p.textContent = "読み込めませんでした。画面を引き下げて更新してください。"; list.append(p); return; }
   if (!data.length) { const p = document.createElement("p"); p.className = "empty"; p.textContent = "まだ問題集がありません。上のフォームから最初の1つをつくろう。"; list.append(p); return; }
+  const { data: stats } = await db.rpc("set_stats");
+  const sm = new Map((stats || []).map(x => [x.set_id, x]));
   for (const s of data) {
     const card = document.createElement("div"); card.className = "set";
     const t = document.createElement("b"); t.textContent = s.title;
+    const st = document.createElement("div"); st.style.cssText = "margin-top:6px;font-size:13px"; st.textContent = statText(sm.get(s.id));
     const meta = document.createElement("div"); meta.className = "meta";
     const tag = document.createElement("span"); tag.className = "tag" + (s.is_public ? "" : " priv"); tag.textContent = s.is_public ? "公開" : "非公開";
     const who = document.createElement("span");
@@ -345,7 +348,7 @@ async function loadSets(){
     open.onclick = () => openSet(s); meta.prepend(open);
     const play = document.createElement("button"); play.className = "small"; play.style.background = "var(--yel)"; play.textContent = "あそぶ";
     play.onclick = () => playSet(s); meta.prepend(play);
-    card.append(t, meta); list.append(card);
+    card.append(t, st, meta); list.append(card);
   }
 }
 
@@ -392,6 +395,8 @@ async function loadQs(){
   const { data, error } = await db.from("questions").select("*,profiles(display_name)").eq("set_id", curSet.id).order("created_at");
   curQs = data || [];
   $("playBtn").disabled = !curQs.length;
+  const { data: qst } = await db.rpc("question_stats", { p_set: curSet.id });
+  const qm = new Map((qst || []).map(x => [x.question_id, x]));
   if (error || !curQs.length) {
     const p = document.createElement("p"); p.className = "empty";
     p.textContent = error ? "読み込めませんでした。" : "まだ問題がありません。";
@@ -403,6 +408,8 @@ async function loadQs(){
     const meta = document.createElement("div"); meta.className = "meta";
     const tag = document.createElement("span"); tag.className = "tag"; tag.textContent = TYPE_NAME[q.type] || q.type;
     meta.append(tag);
+    const sx = qm.get(q.id);
+    if (sx) { const sp = document.createElement("span"); sp.textContent = statText(sx); meta.append(sp); }
     if (q.image_path) { const im = document.createElement("span"); im.className = "tag"; im.textContent = "画像あり"; meta.append(im); }
     if (q.created_by && q.created_by !== me.id) {
       const w = document.createElement("span"); w.textContent = "追加: " + (q.profiles?.display_name || "不明"); meta.append(w);
@@ -697,6 +704,12 @@ async function renderBattle(){
     $("qExp").textContent = "正解: " + correctText(q) + (q.explanation ? "\n" + q.explanation : "");
     if (host) { $("nextBtn").textContent = qi + 1 < battle.qs.length ? "次の問題へ" : "結果を見る"; $("nextBtn").classList.remove("hidden"); }
   }
+}
+
+function pct(c, t){ c = Number(c); t = Number(t); return t ? Math.round(100 * c / t) + "%" : "-"; }
+function statText(x){
+  if (!x || (!Number(x.my_total) && !Number(x.all_total))) return "まだ解かれていません";
+  return "あなた " + pct(x.my_correct, x.my_total) + "(" + Number(x.my_total) + "回) / みんな " + pct(x.all_correct, x.all_total) + "(" + Number(x.all_total) + "回)";
 }
 
 function shuf(a){
