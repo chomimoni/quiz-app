@@ -186,6 +186,30 @@ button:disabled{opacity:.55;cursor:default}
     <p id="addMsg" class="msg" role="status"></p>
   </div>
 
+  <div id="bulkPanel" class="panel">
+    <h2>まとめて追加する</h2>
+    <p style="margin:0 0 8px">1行に1問、<b>|</b> で区切って貼り付けます。</p>
+    <details style="margin-bottom:10px">
+      <summary style="font-weight:900;cursor:pointer">書き方を見る</summary>
+      <pre style="white-space:pre-wrap;font-size:13px;margin:8px 0 0">単一|問題文|*正解|選択肢|選択肢
+複数|問題文|*正解|*正解|選択肢
+正誤|問題文|○ または ×
+穴埋め|問題文|正解|別の書き方の正解
+並べ替え|問題文|1番目|2番目|3番目
+マッチング|問題文|左=右|左=右
+単語|単語|意味
+(どの行も、最後に |解説:○○ を付けられます)
+
+例:
+単一|心臓の部屋はいくつ?|*4つ|2つ|3つ|解説:2心房2心室
+正誤|心臓は筋肉でできている|○
+マッチング|臓器と働き|心臓=血液を送る|肺=酸素を取り込む</pre>
+    </details>
+    <textarea id="bulkText" style="min-height:140px" placeholder="ここに貼り付ける"></textarea>
+    <button id="bulkBtn" class="wide">まとめて追加する</button>
+    <p id="bulkMsg" class="msg" role="status" style="white-space:pre-wrap"></p>
+  </div>
+
   <h2 style="color:var(--yel)">問題一覧</h2>
   <div id="qList"></div>
 </section>
@@ -385,6 +409,8 @@ function openSet(s){
   $("ownerPanel").classList.toggle("hidden", !isOwner);
   $("setPublic").checked = !!s.is_public; $("setContrib").checked = !!s.allow_contrib; $("setMsg").textContent = "";
   $("addPanel").classList.toggle("hidden", !(isOwner || (s.is_public && s.allow_contrib)));
+  $("bulkPanel").classList.toggle("hidden", !(isOwner || (s.is_public && s.allow_contrib)));
+  $("bulkMsg").textContent = "";
   $("addMsg").textContent = "";
   show("set"); loadQs();
 }
@@ -706,6 +732,76 @@ async function renderBattle(){
   }
 }
 
+const TYPE_ALIAS = { "単一": "single", "複数": "multiple", "正誤": "truefalse", "穴埋め": "fill", "並べ替え": "ordering", "マッチング": "matching", "単語": "word" };
+
+function parseBulk(text){
+  const rows = [], errs = [];
+  text.split("\n").forEach((raw, n) => {
+    const line = raw.trim().replace(/\uFF5C/g, "|");
+    if (!line) return;
+    const err = m => { errs.push((n + 1) + "行目: " + m); };
+    const f = line.split("|").map(s => s.trim());
+    const type = TYPE_ALIAS[f[0]];
+    if (!type) return err("形式「" + f[0] + "」が分かりません");
+    const body = f[1];
+    if (!body) return err("問題文がありません");
+    let expl = null;
+    const rest = f.slice(2).filter(x => {
+      const m = x.match(/^解説[:\uFF1A]\s*(.*)$/);
+      if (m) { expl = m[1] || null; return false; }
+      return x !== "";
+    });
+    let content;
+    if (type === "single" || type === "multiple") {
+      const opts = rest.map(x => x.replace(/^\*\s*/, ""));
+      const ans = rest.map((x, i) => x.startsWith("*") ? i : -1).filter(i => i >= 0);
+      if (opts.length < 2 || opts.length > 8) return err("選択肢は2〜8個にしてください");
+      if (type === "single") {
+        if (ans.length !== 1) return err("正解の選択肢1つに * を付けてください");
+        content = { options: opts, answer: ans[0] };
+      } else {
+        if (!ans.length) return err("正解の選択肢に * を付けてください");
+        content = { options: opts, answers: ans };
+      }
+    } else if (type === "truefalse") {
+      const v = (rest[0] || "").toLowerCase();
+      if (["○", "〇", "正", "正しい", "true", "t"].includes(v)) content = { answer: true };
+      else if (["×", "✕", "誤", "誤り", "false", "f"].includes(v)) content = { answer: false };
+      else return err("正誤は ○ か × で書いてください");
+    } else if (type === "fill") {
+      if (!rest.length) return err("正解がありません");
+      content = { answers: rest };
+    } else if (type === "ordering") {
+      if (rest.length < 2 || rest.length > 6) return err("並べ替えは2〜6個にしてください");
+      content = { items: rest };
+    } else if (type === "matching") {
+      const pairs = rest.map(x => x.replace("\uFF1D", "=").split("=").map(s => s.trim())).filter(p => p.length === 2 && p[0] && p[1]);
+      if (pairs.length !== rest.length || pairs.length < 2 || pairs.length > 6) return err("マッチングは「左=右」を2〜6組で書いてください");
+      content = { pairs };
+    } else {
+      if (!rest[0]) return err("意味がありません");
+      content = { meaning: rest[0] };
+    }
+    rows.push({ set_id: curSet.id, type, body, explanation: expl, content });
+  });
+  return { rows, errs };
+}
+
+$("bulkBtn").onclick = async () => {
+  const msg = $("bulkMsg"); msg.className = "msg"; msg.textContent = "";
+  const { rows, errs } = parseBulk($("bulkText").value);
+  if (errs.length) {
+    msg.textContent = errs.slice(0, 5).join("\n") + (errs.length > 5 ? "\nほか" + (errs.length - 5) + "件" : "") + "\n1問も追加していません。直してから、もう一度押してください。";
+    return;
+  }
+  if (!rows.length) { msg.textContent = "入力がありません。"; return; }
+  if (rows.length > 200) { msg.textContent = "一度に追加できるのは200問までです。"; return; }
+  const { error } = await db.from("questions").insert(rows);
+  if (error) { msg.textContent = "追加できませんでした。もう一度試してください。"; return; }
+  $("bulkText").value = ""; msg.className = "msg ok"; msg.textContent = rows.length + "問を追加しました。";
+  loadQs();
+};
+
 function pct(c, t){ c = Number(c); t = Number(t); return t ? Math.round(100 * c / t) + "%" : "-"; }
 function statText(x){
   if (!x || (!Number(x.my_total) && !Number(x.all_total))) return "まだ解かれていません";
@@ -735,7 +831,7 @@ function endEdit(){
   showOpts(4);
   $("imgPrev").classList.add("hidden"); $("rmImgRow").classList.add("hidden"); $("rmImg").checked = false;
   $("addTitle").textContent = "問題を追加する"; $("addQBtn").textContent = "追加する"; $("cancelEditBtn").classList.add("hidden");
-  if (curSet) $("addPanel").classList.toggle("hidden", !canAdd(curSet));
+  if (curSet) { $("addPanel").classList.toggle("hidden", !canAdd(curSet)); $("bulkPanel").classList.toggle("hidden", !canAdd(curSet)); }
 }
 $("cancelEditBtn").onclick = () => { endEdit(); $("addMsg").textContent = ""; };
 
