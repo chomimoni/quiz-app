@@ -148,6 +148,11 @@ button:disabled{opacity:.55;cursor:default}
       <div class="row"><input type="radio" name="sc" value="1"><input type="text" id="o1" placeholder="選択肢2"></div>
       <div class="row"><input type="radio" name="sc" value="2"><input type="text" id="o2" placeholder="選択肢3"></div>
       <div class="row"><input type="radio" name="sc" value="3"><input type="text" id="o3" placeholder="選択肢4"></div>
+      <div class="row hidden" id="row4"><input type="radio" name="sc" value="4"><input type="text" id="o4" placeholder="選択肢5"></div>
+      <div class="row hidden" id="row5"><input type="radio" name="sc" value="5"><input type="text" id="o5" placeholder="選択肢6"></div>
+      <div class="row hidden" id="row6"><input type="radio" name="sc" value="6"><input type="text" id="o6" placeholder="選択肢7"></div>
+      <div class="row hidden" id="row7"><input type="radio" name="sc" value="7"><input type="text" id="o7" placeholder="選択肢8"></div>
+      <button id="addOptBtn" type="button" class="small" style="margin-top:12px">選択肢をふやす(最大8つ)</button>
     </div>
     <div id="fTf" class="hidden">
       <label>正解</label>
@@ -204,8 +209,15 @@ button:disabled{opacity:.55;cursor:default}
   <div id="bMenu">
     <div class="panel">
       <h2>部屋をつくる</h2>
-      <label for="bSet">問題集(ランダムで最大10問)</label>
+      <label for="bSet">問題集</label>
       <select id="bSet"></select>
+      <label for="bCount">問題数(ランダムに選ばれます)</label>
+      <select id="bCount">
+        <option value="5">5問</option>
+        <option value="10" selected>10問</option>
+        <option value="20">20問</option>
+        <option value="0">全部</option>
+      </select>
       <button id="bCreate" class="wide">部屋をつくる</button>
     </div>
     <div class="panel">
@@ -425,7 +437,7 @@ $("addQBtn").onclick = async () => {
   if (!body) { msg.textContent = "問題文を入力してください。"; return; }
   let content;
   if (type === "single") {
-    const opts = [0,1,2,3].map(i => $("o" + i).value.trim());
+    const opts = [0,1,2,3,4,5,6,7].map(i => $("o" + i).value.trim());
     const ans = Number(document.querySelector('input[name="sc"]:checked').value);
     const filled = opts.filter(Boolean);
     if (filled.length < 2) { msg.textContent = "選択肢を2つ以上入力してください。"; return; }
@@ -438,7 +450,7 @@ $("addQBtn").onclick = async () => {
     if (!answers.length) { msg.textContent = "正解を入力してください。"; return; }
     content = { answers };
   } else if (type === "multiple") {
-    const opts = [0,1,2,3].map(i => $("o" + i).value.trim());
+    const opts = [0,1,2,3,4,5,6,7].map(i => $("o" + i).value.trim());
     const chk = [...document.querySelectorAll('input[name="sc"]:checked')].map(e => Number(e.value));
     const filled = opts.filter(Boolean);
     if (filled.length < 2) { msg.textContent = "選択肢を2つ以上入力してください。"; return; }
@@ -610,7 +622,7 @@ function enterRoom(id){
   battleTimer = setInterval(pollBattle, 1000); pollBattle();
 }
 $("bCreate").onclick = async () => {
-  const { data, error } = await db.rpc("create_room", { p_set: $("bSet").value });
+  const { data, error } = await db.rpc("create_room", { p_set: $("bSet").value, p_count: Number($("bCount").value) });
   if (error) { $("bMsg").textContent = "部屋をつくれませんでした。問題集に問題があるか確認してください。"; return; }
   enterRoom(data);
 };
@@ -693,12 +705,21 @@ function shuf(a){
   return b;
 }
 
+let optCount = 4;
+function showOpts(n){
+  optCount = n;
+  for (let i = 4; i < 8; i++) $("row" + i).classList.toggle("hidden", i >= n);
+  $("addOptBtn").classList.toggle("hidden", n >= 8);
+}
+$("addOptBtn").onclick = () => showOpts(optCount + 1);
+
 let editingQ = null;
 function canAdd(s){ return s.owner_id === me.id || (s.is_public && s.allow_contrib); }
 
 function endEdit(){
   editingQ = null;
-  ["qBodyIn","o0","o1","o2","o3","fillAns","qExpIn","ordText","matchText","meaningIn","imgIn"].forEach(id => $(id).value = "");
+  ["qBodyIn","o0","o1","o2","o3","fillAns","qExpIn","ordText","matchText","meaningIn","imgIn","o4","o5","o6","o7"].forEach(id => $(id).value = "");
+  showOpts(4);
   $("imgPrev").classList.add("hidden"); $("rmImgRow").classList.add("hidden"); $("rmImg").checked = false;
   $("addTitle").textContent = "問題を追加する"; $("addQBtn").textContent = "追加する"; $("cancelEditBtn").classList.add("hidden");
   if (curSet) $("addPanel").classList.toggle("hidden", !canAdd(curSet));
@@ -709,7 +730,8 @@ function startEdit(q){
   editingQ = q; const c = q.content;
   $("qType").value = q.type; $("qType").onchange();
   $("qBodyIn").value = q.body; $("qExpIn").value = q.explanation || "";
-  [0,1,2,3].forEach(i => $("o" + i).value = (c.options && c.options[i]) || "");
+  [0,1,2,3,4,5,6,7].forEach(i => $("o" + i).value = (c.options && c.options[i]) || "");
+  showOpts(Math.max(4, (c.options || []).length));
   document.querySelectorAll('input[name="sc"]').forEach(e => {
     const i = Number(e.value);
     e.checked = q.type === "multiple" ? (c.answers || []).includes(i) : i === c.answer;
