@@ -265,6 +265,14 @@ button:disabled{opacity:.55;cursor:default}
   <button id="settingsBack" class="ghost">もどる</button>
   <h1 style="margin:14px 0 18px">設定</h1>
   <div class="panel">
+    <h2>アイコン</h2>
+    <div id="avPrev" style="margin-bottom:12px"></div>
+    <input type="file" id="avFile" accept="image/*">
+    <button id="avBtn" class="wide">この写真にする</button>
+    <button id="avDel" class="wide" style="background:#fff;margin-top:14px">写真をやめる</button>
+    <p id="avMsg" class="msg" role="status"></p>
+  </div>
+  <div class="panel">
     <h2>ニックネーム</h2>
     <label for="stName">新しいニックネーム</label>
     <input id="stName" type="text" maxlength="20" autocomplete="nickname">
@@ -304,9 +312,9 @@ async function boot(){
 
 async function enter(user){
   me = user;
-  const { data } = await db.from("profiles").select("display_name,is_admin").eq("id", user.id).single();
-  profile = data || { display_name: "ゲスト", is_admin: false };
-  $("hello").textContent = profile.display_name + "さん";
+  const { data } = await db.from("profiles").select("display_name,is_admin,avatar_path").eq("id", user.id).single();
+  profile = data || { display_name: "ゲスト", is_admin: false, avatar_path: null };
+  setHello();
   $("roleLine").textContent = profile.is_admin ? "管理者(他の人の非公開も閲覧のみ可)" : "今日も1問ずつ覚えよう";
   show("home");
   loadSets();
@@ -345,7 +353,7 @@ async function loadSets(){
   updateReview();
   const list = $("list"); list.replaceChildren();
   const { data, error } = await db.from("quiz_sets")
-    .select("id,title,is_public,allow_contrib,owner_id,profiles(display_name)")
+    .select("id,title,is_public,allow_contrib,owner_id,profiles(display_name,avatar_path)")
     .order("created_at", { ascending: false });
   if (error) { const p = document.createElement("p"); p.className = "empty"; p.textContent = "読み込めませんでした。画面を引き下げて更新してください。"; list.append(p); return; }
   if (!data.length) { const p = document.createElement("p"); p.className = "empty"; p.textContent = "まだ問題集がありません。上のフォームから最初の1つをつくろう。"; list.append(p); return; }
@@ -358,7 +366,8 @@ async function loadSets(){
     const meta = document.createElement("div"); meta.className = "meta";
     const tag = document.createElement("span"); tag.className = "tag" + (s.is_public ? "" : " priv"); tag.textContent = s.is_public ? "公開" : "非公開";
     const who = document.createElement("span");
-    who.textContent = s.owner_id === me.id ? "自分の問題集" : "作成: " + (s.profiles?.display_name || "不明");
+    if (s.owner_id === me.id) who.textContent = "自分の問題集";
+    else who.replaceChildren(document.createTextNode("作成: "), nameNode(s.profiles));
     meta.append(tag, who);
     if (s.owner_id === me.id) {
       const del = document.createElement("button"); del.className = "small"; del.textContent = "削除";
@@ -404,7 +413,8 @@ const norm = s => String(s).trim().normalize("NFKC").toLowerCase();
 function openSet(s){
   curSet = s; endEdit();
   $("setTitle").textContent = s.title;
-  $("setInfo").textContent = s.owner_id === me.id ? "自分の問題集" : "作成: " + (s.profiles?.display_name || "不明");
+  if (s.owner_id === me.id) $("setInfo").textContent = "自分の問題集";
+  else $("setInfo").replaceChildren(document.createTextNode("作成: "), nameNode(s.profiles));
   const isOwner = s.owner_id === me.id;
   $("ownerPanel").classList.toggle("hidden", !isOwner);
   $("setPublic").checked = !!s.is_public; $("setContrib").checked = !!s.allow_contrib; $("setMsg").textContent = "";
@@ -418,7 +428,7 @@ $("backHome").onclick = () => { show("home"); loadSets(); };
 
 async function loadQs(){
   const box = $("qList"); box.replaceChildren();
-  const { data, error } = await db.from("questions").select("*,profiles(display_name)").eq("set_id", curSet.id).order("created_at");
+  const { data, error } = await db.from("questions").select("*,profiles(display_name,avatar_path)").eq("set_id", curSet.id).order("created_at");
   curQs = data || [];
   $("playBtn").disabled = !curQs.length;
   const { data: qst } = await db.rpc("question_stats", { p_set: curSet.id });
@@ -438,7 +448,7 @@ async function loadQs(){
     if (sx) { const sp = document.createElement("span"); sp.textContent = statText(sx); meta.append(sp); }
     if (q.image_path) { const im = document.createElement("span"); im.className = "tag"; im.textContent = "画像あり"; meta.append(im); }
     if (q.created_by && q.created_by !== me.id) {
-      const w = document.createElement("span"); w.textContent = "追加: " + (q.profiles?.display_name || "不明"); meta.append(w);
+      const w = document.createElement("span"); w.append(document.createTextNode("追加: "), nameNode(q.profiles)); meta.append(w);
     }
     if (curSet.owner_id === me.id || q.created_by === me.id) {
       const ed = document.createElement("button"); ed.className = "small"; ed.textContent = "編集";
@@ -679,7 +689,7 @@ async function pollBattle(){
   try {
     const [a, b] = await Promise.all([
       db.from("rooms").select("*").eq("id", bt.id).single(),
-      db.from("room_players").select("user_id,score,profiles(display_name)").eq("room_id", bt.id)
+      db.from("room_players").select("user_id,score,profiles(display_name,avatar_path)").eq("room_id", bt.id)
     ]);
     if (battle !== bt || !a.data) return;
     bt.room = a.data; bt.players = (b.data || []).sort((x, y) => y.score - x.score);
@@ -694,7 +704,8 @@ async function renderBattle(){
   if (r.status === "waiting") {
     $("bMenu").classList.add("hidden"); $("bRoom").classList.remove("hidden");
     $("bTitle").textContent = r.set_title; $("bCodeShow").textContent = r.code;
-    $("bPlayers").textContent = "参加者: " + battle.players.map(pname).join("、");
+    const bp = $("bPlayers"); bp.replaceChildren();
+    battle.players.forEach(p => { const s = document.createElement("span"); s.style.cssText = "display:inline-block;margin:0 14px 8px 0"; s.append(nameNode(p.profiles)); bp.append(s); });
     $("bStart").classList.toggle("hidden", !host);
     $("bWait").textContent = host ? "全員が入ったら、はじめる。" : "ホストが始めるのを待っています。";
     return;
@@ -705,7 +716,8 @@ async function renderBattle(){
     battle.qs = r.question_ids.map(id => m.get(id)).filter(Boolean);
   }
   const sc = $("bScore"); sc.classList.remove("hidden"); sc.replaceChildren();
-  battle.players.forEach((p, i) => { const d = document.createElement("div"); d.textContent = (i + 1) + "位  " + pname(p) + "  " + p.score + "点"; sc.append(d); });
+  battle.players.forEach((p, i) => { const d = document.createElement("div"); d.style.cssText = "display:flex;align-items:center;gap:6px;margin-top:6px";
+    d.append(document.createTextNode((i + 1) + "位"), nameNode(p.profiles), document.createTextNode(p.score + "点")); sc.append(d); });
   if (r.status === "finished") {
     clearInterval(battleTimer); battleTimer = null;
     show("quiz"); finished = true;
@@ -802,6 +814,71 @@ $("bulkBtn").onclick = async () => {
   loadQs();
 };
 
+function avatarEl(p, size){
+  const s = size || 26;
+  const base = "width:" + s + "px;height:" + s + "px;border-radius:50%;border:2px solid var(--line);flex:none;margin-right:6px;vertical-align:middle;";
+  if (p && p.avatar_path) {
+    const im = document.createElement("img");
+    im.alt = ""; im.src = db.storage.from("avatars").getPublicUrl(p.avatar_path).data.publicUrl;
+    im.style.cssText = base + "object-fit:cover;background:#fff"; return im;
+  }
+  const d = document.createElement("span");
+  d.textContent = ((p && p.display_name) || "?").slice(0, 1);
+  d.style.cssText = base + "display:inline-flex;align-items:center;justify-content:center;font-weight:900;font-size:" + Math.round(s * 0.5) + "px;background:var(--yel);color:var(--ink)";
+  return d;
+}
+function nameNode(p){
+  const w = document.createElement("span"); w.style.cssText = "display:inline-flex;align-items:center";
+  w.append(avatarEl(p, 24), document.createTextNode((p && p.display_name) || "不明")); return w;
+}
+function setHello(){ $("hello").replaceChildren(avatarEl(profile, 38), document.createTextNode(profile.display_name + "さん")); }
+function renderAvPrev(){ $("avPrev").replaceChildren(avatarEl(profile, 88)); }
+
+// 真ん中を正方形に切り取って、256pxのJPEGにする
+function squareAvatar(file){
+  return new Promise((res, rej) => {
+    const img = new Image(), u = URL.createObjectURL(file);
+    img.onload = () => {
+      const m = Math.min(img.width, img.height), c = document.createElement("canvas");
+      c.width = c.height = 256;
+      const ctx = c.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, 256, 256);
+      ctx.drawImage(img, (img.width - m) / 2, (img.height - m) / 2, m, m, 0, 0, 256, 256);
+      URL.revokeObjectURL(u);
+      c.toBlob(b => b ? res(b) : rej(new Error("toBlob")), "image/jpeg", 0.85);
+    };
+    img.onerror = () => rej(new Error("load"));
+    img.src = u;
+  });
+}
+
+$("avBtn").onclick = async () => {
+  const msg = $("avMsg"); msg.className = "msg";
+  const f = $("avFile").files[0];
+  if (!f) { msg.textContent = "写真を選んでください。"; return; }
+  try {
+    const blob = await squareAvatar(f);
+    const path = me.id + "/" + crypto.randomUUID() + ".jpg";
+    const up = await db.storage.from("avatars").upload(path, blob, { contentType: "image/jpeg" });
+    if (up.error) throw up.error;
+    const { error } = await db.from("profiles").update({ avatar_path: path }).eq("id", me.id);
+    if (error) { await db.storage.from("avatars").remove([path]); throw error; }
+    const old = profile.avatar_path; profile.avatar_path = path;
+    if (old) await db.storage.from("avatars").remove([old]);
+    $("avFile").value = ""; renderAvPrev(); setHello();
+    msg.className = "msg ok"; msg.textContent = "変更しました。";
+  } catch (e) { msg.textContent = "変更できませんでした。もう一度試してください。"; }
+};
+
+$("avDel").onclick = async () => {
+  const msg = $("avMsg"); msg.className = "msg";
+  const old = profile.avatar_path;
+  if (!old) { msg.textContent = "いまは写真を設定していません。"; return; }
+  const { error } = await db.from("profiles").update({ avatar_path: null }).eq("id", me.id);
+  if (error) { msg.textContent = "変更できませんでした。もう一度試してください。"; return; }
+  profile.avatar_path = null; await db.storage.from("avatars").remove([old]);
+  renderAvPrev(); setHello(); msg.className = "msg ok"; msg.textContent = "写真をやめました。";
+};
+
 function pct(c, t){ c = Number(c); t = Number(t); return t ? Math.round(100 * c / t) + "%" : "-"; }
 function statText(x){
   if (!x || (!Number(x.my_total) && !Number(x.all_total))) return "まだ解かれていません";
@@ -860,8 +937,8 @@ function startEdit(q){
 }
 
 $("settingsBtn").onclick = () => {
-  $("stName").value = profile.display_name;
-  ["stNameMsg", "stPwMsg"].forEach(id => { $(id).textContent = ""; $(id).className = "msg"; });
+  $("stName").value = profile.display_name; renderAvPrev();
+  ["stNameMsg", "stPwMsg", "avMsg"].forEach(id => { $(id).textContent = ""; $(id).className = "msg"; });
   show("settings");
 };
 $("settingsBack").onclick = () => show("home");
@@ -871,7 +948,7 @@ $("stNameBtn").onclick = async () => {
   if (!name) { msg.textContent = "ニックネームを入力してください。"; return; }
   const { error } = await db.from("profiles").update({ display_name: name }).eq("id", me.id);
   if (error) { msg.textContent = "変更できませんでした。もう一度試してください。"; return; }
-  profile.display_name = name; $("hello").textContent = name + "さん";
+  profile.display_name = name; setHello();
   msg.className = "msg ok"; msg.textContent = "変更しました。";
 };
 
